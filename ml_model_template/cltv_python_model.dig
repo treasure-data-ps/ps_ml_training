@@ -1,0 +1,97 @@
+####################### MAIN WORKFLOW ########################## 
+_export:
+  !include : 'config/input_params.yml'
+  td:
+    database: ${globals.sink_database}
+    engine: presto
+
++instantiate_tables:
+  td_ddl>: 
+  empty_tables: ["cltv_predictions_train", "cltv_predictions_test", "cltv_predictions_unscored"]
+    
++run_python_script: # outputs: cltv_predictions_train, cltv_predictions_test, cltv_feature_importances, cltv_model_params
+  docker:
+    image: "digdag/digdag-python:3.9"
+  py>: python_files.cltv.build_cltv
+  _env:
+    TD_API_KEY: ${secret:td.apikey}
+    TD_API_SERVER: ${globals.api_endpoint}
+    session_id: ${session_id}
+    database: ${globals.sink_database}
+    input_train: cltv_train
+    input_test: cltv_test
+    canonical_id: ${input_data.canonical_id}
+    model_perf_table: ${model_performance_table}
+    features_table: ${feature_importances_table}
+    predictions_table: cltv_predictions_python
+    target_stats_table: cltv_predictions_target_stats
+    binned_stats_table: cltv_binned_stats
+    model: ${python_model}
+    target: ${input_data.target_column}${input_data.scale_target}
+    exclude_features: ${input_data.exclude_cols}|time|shuf
+    run_predictions: ${run_predictions}
+
+
+####################### EVALUATE MODEL PERFORMANCE #######################
++evaluate:
+  _parallel: true
+####################### TRAIN DATA EVAL #######################
+  +evaluate_on_train_data:
+    td>: queries/cltv_regressor/evaluate_and_store_model_metrics.sql
+    target: train
+    insert_into: ${model_performance_table}
+    engine: hive
+    engine_version: stable
+
+####################### TEST DATA EVAL #######################
+  +evaluate_on_test_data:
+    td>: queries/cltv_regressor/evaluate_and_store_model_metrics.sql
+    target: test
+    insert_into: ${model_performance_table}
+    engine: hive
+    engine_version: stable
+
+####################### FINAL TABLE OUTPUTS #######################
++output_final_tables:
+  _parallel: true
+
+  +create_global_session_filter:
+    td>: queries/cltv_regressor/global_session_time_filter.sql
+    insert_into: cltv_global_session_filter
+
+  +output_cltv_clean_prediction:
+    +full_predictions:
+      if>: ${run_predictions == 'yes'}
+      _do: 
+        +full_attribute_table:
+          td>: queries/output_tables/predicted_cltv_full_data.sql
+          create_table: ${prediction_attr_table}
+      _else_do:
+        +attribute_table:
+          td>: queries/output_tables/predicted_cltv_original_data.sql
+          create_table: ${prediction_attr_table}
+    +histogram:
+      td>: queries/output_tables/target_histograms.sql
+      insert_into: cltv_target_histogram
+    +actual_vs_pred_stats: 
+      td>: queries/output_tables/predicted_cltv_dataset_stats.sql
+      insert_into: ${target_stats_table}
+    +label_stats:
+      td>: queries/output_tables/predicted_cltv_label_stats.sql
+      insert_into: ${label_stats_table}
+
++check_for_cleanup:
+  if>: ${globals.cleanup_temp_tables !== 'no'}
+  _do:
+    +clean_tables:
+      database: ${globals.sink_database}
+      td_ddl>: 
+      drop_tables: ["cltv_predictions_train", "cltv_predictions_test", "${model_performance_table}_temp", "cltv_test_shuf", "cltv_pred_shuf"]
+  
+    +delete_loop:
+      td_for_each>: queries/output_tables/tables_to_delete.sql
+      _parallel: true
+      _do:
+        td_ddl>:
+        drop_tables: ['${td.each.table_name}']
+      

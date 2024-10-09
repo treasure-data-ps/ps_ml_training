@@ -1,0 +1,50 @@
+#####################################################################
+########################## GLOBAL PARAMS ############################
+#####################################################################
+globals:
+  api_endpoint: 'api.treasuredata.com'            # TD API endpoint
+  sink_database: ml_training_cdp_world_2024       # database where output tables are saved
+  cleanup_temp_tables: yes                        # yes/no whether temp tables are auto-deleted
+
+input_data: 
+  db: ml_training_cdp_world_2024               # source table database
+  tbl: agg_attr_derived_attributes_final       # source table name
+  canonical_id: td_canonical_id                # column containing unique user ID
+  target_column: total_spend                   # column containing target variable
+
+  # data prep
+  exclude_cols: 'campaign'            # in regex, separated by '|', columns to ignore for modeling
+  has_categorical: yes                # yes/no whether to include categoricals, or ignore for modeling
+  one_hot_distinct_limit: 4           # for varchar data, number of unique values to keep per column
+  custom_val_tbl: no                  # table name if there is a custom validation subset to use for model validation, or else "no"
+  train_sample_rate: 0.8              # if "custom_val_tbl" is not "no", the training sample rate (0.8 for a 80%-20% train test split)
+
+  # feature engineering
+  scale_features: 'yes'       # 'yes' to use minmax, 'no' otherwise
+  scale_target: ''            # use _minmax, _zscore, _ln, _robust as options, or leave blank for unscaled target
+
+####################### MODEL PARAMS ######################################
+use_hive_model: no            # whether to use Python models or HIVEMALL Linear Regression
+python_model: linreg          # options are linreg, lgb (Light Gradient Boosting), cb (CatBoost), xgb (XGBoost)
+
+# HIVEMALL
+hive:
+  add_bias: yes              # whether to add an intercept term for the HIVEMALL model
+  hyperparams: '--loss squaredloss -opt AdaGrad -reg no'      # HIVEMALL model hyperparameters
+
+################### PREDICTIONS ##########################
+run_predictions: yes                                 # whether to run predictions
+prediction_database: ml_training_cdp_world_2024      # database with prediction raw data
+prediction_table: 'agg_attr_derived_attributes_final'                                # if run_predictions == yes, what table to make predictions on
+
+####################### MODEL MONITORING ###################################
+drift_limit: 5.0              # KL Divergence Drift coefficient limit
+top_n_features: 100           # maximum number of features to measure drift
+
+####################### OUTPUT TABLES ######################################
+feature_importances_table: cltv_feature_importances_history
+model_performance_table: cltv_model_metrics
+prediction_attr_table: cltv_predictions_attr
+target_stats_table: cltv_predictions_target_stats
+label_stats_table: cltv_predictions_label_stats
+target_name: ${input_data.target_column}${input_data.scale_target}

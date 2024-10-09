@@ -1,0 +1,1 @@
+SELECT table_name FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '${globals.sink_database}' AND REGEXP_LIKE(table_name, 'cltv_to_predict_|cltv_test_\d+')

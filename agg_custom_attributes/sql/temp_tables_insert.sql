@@ -1,0 +1,1 @@
+SELECT '${sink_database}' AS table_db, '${prefix}_${table.name}' as table_name

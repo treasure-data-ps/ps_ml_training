@@ -1,0 +1,31 @@
+#####################################################################
+########################## GLOBAL PARAMS ############################
+#####################################################################
+sink_database: ml_training_cdp_world_2024       # db where the final agg_attr_derived_attributes_final is written
+unique_user_id: td_canonical_id                 # unique join key for all input tables
+prefix: agg_attr                                # leave as Default (added to all output tables as prefix for easy find in database)
+identities_table: enriched_user_master          # leave as Default --> base table of all distinct user_ids in the Parent Segment used for joining all custom feature tables to
+cleanup_temp_tables: yes                        # yes - will delete all temp tables after final table is created
+
+#####################################################################
+############# TABLE PARAMS FOR SOURCE AND OUTPUT TABLES #############
+#####################################################################
+
+source_tables:                        # <--- List of JSON params to loop through and execute a custom SQL that matches the 'name' param.
+  - name: order_events
+    src_db: ml_training_cdp_world_2024
+    src_table: enrich_orders          # source table that the custom SQL query will run on to create the derieved agg attributes from this table
+    unix_timestamp: time              # name of UNIXTIME timestamp column for behavior tables
+    custom_filter:                    # allows you to apply custom filter to the SQL query by using `WHERE` notation, which gets automatically inserted into query
+
+  - name: pageviews
+    src_db: ml_training_cdp_world_2024
+    src_table: enrich_pageviews
+    unix_timestamp: time
+    custom_filter: 
+
+  - name: email_events
+    src_db: ml_training_cdp_world_2024
+    src_table: enrich_email_events
+    unix_timestamp: time
+    custom_filter: 

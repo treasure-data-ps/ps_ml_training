@@ -1,0 +1,50 @@
+####################### ERROR EMAIL NOTIFICATION ##########################  
+# _error:
+#   mail>: body.txt
+#   subject: CLTV Model - Model Drift Notification
+#   to: ['yish.lim@treasure-data.com']
+
+####################### MAIN WORKFLOW ########################## 
+_export:
+  !include : 'config/input_params.yml'
+  td:
+    database: ${globals.sink_database}
+    engine: presto
+
+# Select features for drift analysis
++get_features_for_drift_analysis:
+  _parallel: true
+  td_for_each>: queries/model_drift/select_features.sql
+  _do:
+    +insert_feature_stats:
+      td>: queries/model_drift/get_feature_stats.sql
+      insert_into: cltv_model_drift_features_temp
+
++create_features_drift_table:
+  td>: queries/model_drift/calc_drift_features.sql
+  create_table: cltv_model_drift_features
+  engine: hive
+  version: stable
+
+
++return_post_model_metrics:
+  _parallel: true
+  +create_model_drift_table:
+    td>: queries/model_drift/model_drift_predictions.sql
+    create_table: cltv_model_drift_predictions
+    engine: hive
+    version: stable
+
+
+####################### MODEL DRIFT DETECTION AND NOTIFICATION ######################
++check_model_drift:
+  td>:
+  query: 'select max_by(kld_drift_coeff, session_id) AS drift_coeff FROM cltv_model_drift_predictions WHERE dataset = ''Predicted'''
+  store_last_results: true
+
++check_if_drift_coeff_passed_limit:
+  if>: ${td.last_results.drift_coeff > drift_limit}
+  _do:
+    +echo:
+      echo>: '[ERROR] CLTV Model Has Reached Model Drift (Kullback-Leibler Divergence) Coefficient Above Threshold of ${drift_limit}'
+

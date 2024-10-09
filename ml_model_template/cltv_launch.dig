@@ -1,0 +1,43 @@
+##################### SCHEDULE PARAMS ##################################  
+# schedule:
+#   weekly>: Sun, 07:15:00
+
+###################### ERROR EMAIL NOTIFICATION ########################
+_error:
+  mail>: body.txt
+  subject: CLTV Regression Model Workflow failed 
+  to: ['yish.lim@treasure-data.com']
+
+####################### MAIN WORKFLOW ###################################
+_export:
+  !include : 'config/input_params.yml'
+  td:
+    database: ${globals.sink_database}
+
+######################## FEATURE AGGREGATION ############################
++require_aggregation_wf:
+  require>: agg_custom_attributes_launch
+  project_name: agg_custom_attributes
+
+############## VECTORIZE & SCALE FOR MODEL TRAINING #####################
++feature_engineering:
+  call>: cltv_feature_engineering.dig
+
+############ EXECUTE MODEL TRAINING IN PYTHON OR HIVEMALL #################
++check_if_python_or_hivemall_model:
+  if>: ${use_hive_model !== 'yes'}
+  _do:
+    +execute_python_model:
+      call>: cltv_python_model.dig
+      
+  _else_do:
+    +execute_hive_model:
+      call>: cltv_hivemall.dig
+
+    +hivemall_predictions: 
+      if>: ${run_predictions == 'yes'}
+      _do: 
+        call>: cltv_predictions.dig
+
++check_model_drift:
+  call>: cltv_drift.dig

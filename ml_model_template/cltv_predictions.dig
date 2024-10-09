@@ -1,0 +1,29 @@
+_export:
+  !include : 'config/input_params.yml'
+  td:
+    database: ${globals.sink_database}
+
+################ CREATE FEATURE TABLES SQL SYNTAX  ################## 
++stage_data:
+  td_ddl>:
+  empty_tables: ["${globals.sink_database}.schema"]
+
++vectorize_table:
+  +get_query:
+    td>: 
+    query: 'SELECT * FROM cltv_vectorize_query'
+    store_last_results: true
+  +vectorize:
+    target: to_predict
+    target_name: 0 as to_predict
+    td>: queries/feature_engineering/vectorize_quant.sql
+    create_table: cltv_to_predict_vectorized
+    engine: hive
+    engine_version: stable
+
++run_prediction: 
+  target: to_predict
+  td>: queries/cltv_regressor/predict_regressor.sql
+  create_table: cltv_predicted_new_data
+  engine: hive
+  engine_version: stable

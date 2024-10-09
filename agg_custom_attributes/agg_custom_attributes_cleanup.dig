@@ -1,0 +1,16 @@
+_export:
+  !include : config/input_params.yml
+  td:
+    database: ${sink_database}
+
+
+# Select temp table names and delete from sink_database
++for_each_temp_table:
+
+  _parallel: true
+  
+  td_for_each>: sql/temp_tables_delete.sql
+  _do:
+    +delete_temp_table:
+      td_ddl>:
+      drop_tables: ["${td.each.table_name}"]

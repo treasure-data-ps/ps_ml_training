@@ -1,0 +1,1 @@
+SELECT ${unique_user_id} FROM ${identities_table}

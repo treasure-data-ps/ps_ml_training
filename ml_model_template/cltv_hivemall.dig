@@ -1,0 +1,134 @@
+_export:
+  !include : 'config/input_params.yml'
+  td:
+    database: ${globals.sink_database}
+
++create_schema_table:
+  td_ddl>:
+  empty_tables: ["${globals.sink_database}.schema", "cltv_regressor"]
+
+####################### VECTORIZE DATA FOR HIVEMALL MODELING #######################
++select_quant_features:
+  td>: queries/feature_engineering/select_quantitative.sql
+  insert_into: schema
+
++generate_query:
+  td>: queries/feature_engineering/generate_vectorize_query_quant.sql
+  create_table: cltv_vectorize_query
+
++vectorize_quant:
+  +get_query:
+    td>:
+    query: 'SELECT * FROM cltv_vectorize_query'
+    store_last_results: true
+  +vectorize:
+    _parallel: true
+    +train:
+      td>: queries/feature_engineering/vectorize_quant.sql
+      target: train
+      create_table: cltv_train_vectorized
+      engine: hive
+      engine_version: stable
+    +test:
+      td>: queries/feature_engineering/vectorize_quant.sql
+      target: test
+      create_table: cltv_test_vectorized
+      engine: hive
+      engine_version: stable
+
+#################### TRAIN MODEL #########################
++check_if_add_bias:
+  if>: ${hive.add_bias == 'yes'}
+  _do:
+    +train_model_with_bias:
+      td>: queries/cltv_regressor/train_regressor_bias.sql
+      insert_into: cltv_regressor
+      engine: hive
+      engine_version: stable
+  _else_do:
+    +train_model_without_bias:
+      td>: queries/cltv_regressor/train_regressor_no_bias.sql
+      insert_into: cltv_regressor
+      engine: hive
+      engine_version: stable
+
+############# RUN PREDICTION FUNCTION ON TEST/TRAIN DATA ##############
++predict:
+  _parallel: true
+
+  +train_data:
+    td>: queries/cltv_regressor/predict_regressor.sql
+    target: train
+    create_table: cltv_predictions_train
+    engine: hive
+    engine_version: stable
+
+  +test_data:
+    td>: queries/cltv_regressor/predict_regressor.sql
+    target: test
+    create_table: cltv_predictions_test
+    engine: hive
+    engine_version: stable
+
+####################### EVALUATE MODEL PERFORMANCE #######################
++evaluate:
+  _parallel: true
+####################### TRAIN DATA EVAL #######################
+  +evaluate_on_train_data:
+    td>: queries/cltv_regressor/evaluate_and_store_model_metrics.sql
+    target: train
+    insert_into: ${model_performance_table}
+    engine: hive
+    engine_version: stable
+
+####################### TEST DATA EVAL #######################
+  +evaluate_on_test_data:
+    td>: queries/cltv_regressor/evaluate_and_store_model_metrics.sql
+    target: test
+    insert_into: ${model_performance_table}
+    engine: hive
+    engine_version: stable
+
++output_final_tables:
+  _parallel: true
+
+  +store_feature_importances:
+    td>: queries/cltv_regressor/feature_import_store.sql
+    insert_into: ${feature_importances_table}
+    engine: presto
+
+  +create_global_session_filter:
+    td>: queries/cltv_regressor/global_session_time_filter.sql
+    create_table: cltv_global_session_filter
+    engine: presto
+
+  +output_model_params:
+    td>: queries/output_tables/model_params.sql
+    insert_into: cltv_model_params
+    engine: presto
+
+  +output_cltv_clean_prediction:
+    +full_predictions:
+      td>: queries/output_tables/predicted_cltv_original_data.sql
+      insert_into: ${prediction_attr_table}
+      engine: presto
+    +histogram:
+      td>: queries/output_tables/target_histograms.sql
+      insert_into: cltv_target_histogram
+    +actual_vs_pred_stats: 
+      td>: queries/output_tables/predicted_cltv_dataset_stats.sql
+      insert_into: ${target_stats_table}
+      engine: presto
+    +label_stats:
+      td>: queries/output_tables/predicted_cltv_label_stats.sql
+      insert_into: ${label_stats_table}
+      engine: presto
+
++check_for_cleanup:
+  if>: ${globals.cleanup_temp_tables !== 'no'}
+  _do:
+    +clean_tables:
+      database: ${globals.sink_database}
+      td_ddl>: 
+      drop_tables: ["cltv_train_vectorized", "cltv_test_vectorized", "cltv_predictions_train", "cltv_predictions_test", "${model_performance_table}_temp", ]
+    

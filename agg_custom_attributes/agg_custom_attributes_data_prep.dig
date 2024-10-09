@@ -1,0 +1,52 @@
+_export:
+  !include : config/input_params.yml
+  td:
+    database: ${sink_database}
+
+# Create temp_tables list table
++create_temp_table_list:
+  td_ddl>:
+  empty_tables: ["${prefix}_temp_tables"]
+
+# Loop through source tables and create temp tables with custom attirbutes
++prep_agg_tables:
+    for_each>:
+      table: ${source_tables}
+
+    _parallel:
+      limit: 15
+
+    _do:
+      +create_temp_tables:
+        _parallel: true
+
+        +run_sql_create_table:
+          td>: sql/${table.name}.sql
+          create_table: ${prefix}_${table.name}
+
+        +insert_into_temp_tables:
+          td>: sql/temp_tables_insert.sql
+          insert_into: ${prefix}_temp_tables
+
+# Create base identities table with distinct user_ids to join all temp dereived atribute tables to
++create_base_attributers_table:
+  td>: sql/base_table.sql
+  create_table: ${prefix}_derived_attributes_final
+
+# Join each temp table to base table and then rename joined temp table to the agg_attr_derived_attributes_final table
++join_attr_tables_to_final_identities_table:
+  for_each>:
+    table: ${source_tables}
+
+  _do: 
+    +select_temp_columns:
+      td>: sql/select_agg_cols.sql
+      store_last_results: true
+  
+    +join_user_activity:
+      td>: sql/join_tables.sql
+      create_table: ${prefix}_derived_attributes_temp
+      
+    +rename_temp_table:
+      td_ddl>:
+      rename_tables: [{from: "${prefix}_derived_attributes_temp", to: "${prefix}_derived_attributes_final"}]

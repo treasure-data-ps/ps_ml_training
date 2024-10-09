@@ -1,0 +1,1 @@
+SELECT table_name FROM ${prefix}_temp_tables

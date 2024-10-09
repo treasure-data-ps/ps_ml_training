@@ -1,0 +1,161 @@
+_export:
+  !include : 'config/input_params.yml'
+  td:
+    database: ${globals.sink_database}
+
++stage_data:
+  td_ddl>:
+  empty_tables: ["schema"]
+
+#################### CREATE BASE TABLES ###########################
++target_exists:
+  td>:
+  query: "SELECT * FROM ${input_data.db}.${input_data.tbl} WHERE ${input_data.target_column} != 0 AND ${input_data.target_column} IS NOT NULL"
+  create_table: cltv_base_table
+
++target_null:
+  if>: ${run_predictions == 'yes'}
+  _do:
+    +create_prediction_table:
+      td>: 
+      query: "SELECT * FROM ${prediction_database}.${prediction_table}"
+      create_table: cltv_to_predict_raw
+
+####################### TRAIN TEST SPLIT #######################
++check_if_val_defined:
+  if>: ${input_data.custom_val_tbl == 'no'}
+  _do: 
+    +random_shuffle:
+      td>: queries/feature_engineering/shuffle.sql
+      create_table: cltv_shuffled
+      engine: hive
+      engine_version: stable
+    +split:
+      _parallel: true
+      +train:
+        tgt: ${input_data.target_column}
+        td>: queries/feature_engineering/rnd_split_train_scale_target.sql
+        create_table: cltv_train_temp
+      +test:
+        tgt: ${input_data.target_column}
+        td>: queries/feature_engineering/rnd_split_test_scale_target.sql
+        create_table: cltv_test_temp
+  _else_do:
+    +split:
+      _parallel: true 
+      +train:
+        tgt: ${input_data.target_column}
+        td>: queries/feature_engineering/cust_split_train_scale_target.sql
+        create_table: cltv_train_temp
+      +test: 
+        tgt: ${input_data.target_column}
+        td>: queries/feature_engineering/cust_split_test_scale_target.sql
+        create_table: cltv_test_temp
+
++scale_target_new:
+  if>: ${run_predictions == 'yes'}
+  _do:
+    tgt: ${input_data.target_column}
+    td>: queries/feature_engineering/scale_new_target.sql
+    create_table: cltv_to_predict_temp
+
++check_if_categorical:
+  if>: ${input_data.has_categorical == 'yes'}
+  _do:
+    +select_categorical_tables:
+      database: ${input_data.db}
+      td_for_each>: queries/feature_engineering/select_categorical.sql
+      _parallel: true
+      _do:
+        +check_if_feature_valid:
+          td>:
+          query: "SELECT COUNT(DISTINCT(${td.each.column_name})) as nu FROM cltv_train_temp"
+          store_last_results: true 
+          
+        +insert_onehot_syntax:
+          if>: ${td.last_results.nu > 1}
+          _do:
+            +insert:
+              td>: queries/feature_engineering/insert_to_schema_cat.sql
+              insert_into: schema
+
+    +array_features:
+      +select_array_columns:
+        td_for_each>: queries/feature_engineering/select_array.sql
+        _parallel: true 
+        _do:
+          +insert_array_syntax:
+            td>: queries/feature_engineering/insert_to_schema_arr.sql
+            insert_into: schema
+
++numerical_features:
+  +select_num_columns:
+    database: ${input_data.db}
+    td_for_each>: queries/feature_engineering/select_num.sql
+    _parallel: true
+    _do: 
+      +get_num_agg:
+        td>:
+        query: "SELECT '${td.each.column_name}' as column_name, CAST(min(${td.each.column_name}) as varchar) as min_val, CAST(max(${td.each.column_name}) as varchar) as max_val FROM cltv_train_temp"
+        store_last_results: true
+      +check_variance:
+        # this automatically filters out features with a single value
+        if>: ${td.last_results.min_val != td.last_results.max_val}
+        _do:
+          +insert_num_syntax:
+            td>: queries/feature_engineering/insert_to_schema_num.sql
+            insert_into: schema
+
++generate_transform_query:
+  td>: queries/feature_engineering/generate_query.sql
+  create_table: cltv_feature_transformations
+
++create_final_tables:
+  +get_query:
+    td>:
+    query: 'SELECT * FROM cltv_feature_transformations'
+    store_last_results: true
+    
+  +transform_tables: 
+    if>: ${input_data.scale_features == 'yes'}
+    _do:
+      _parallel: true
+      +scale_train:
+        tbl: cltv_train_temp
+        td>: queries/feature_engineering/create_final_table_scaled.sql
+        create_table: cltv_train
+      +scale_test:
+        tbl: cltv_test_temp
+        td>: queries/feature_engineering/create_final_table_scaled.sql
+        create_table: cltv_test
+      +scale_new_if_needed: 
+        if>: ${run_predictions == 'yes'}
+        _do: 
+          tbl: cltv_to_predict_temp
+          td>: queries/feature_engineering/create_final_table_scaled.sql
+          create_table: cltv_to_predict
+
+    _else_do:
+      _parallel: true
+      +unscaled_train: 
+        tbl: cltv_train_temp
+        td>: queries/feature_engineering/create_final_table.sql
+        create_table: cltv_train
+      +unscaled_test: 
+        tbl: cltv_test_temp
+        td>: queries/feature_engineering/create_final_table.sql
+        create_table: cltv_test
+      +unscaled_new_if_needed: 
+        if>: ${run_predictions == 'yes'}
+        _do: 
+          tbl: cltv_to_predict_temp
+          td>: queries/feature_engineering/create_final_table.sql
+          create_table: cltv_to_predict
+
++check_for_cleanup:
+  if>: ${globals.cleanup_temp_tables !== 'no'}
+  _do:
+    +clean_tables:
+      database: ${globals.sink_database}
+      td_ddl>: 
+      drop_tables: ["cltv_base_table", "cltv_shuffled", "cltv_train_temp", "cltv_test_temp", "cltv_to_predict_raw", "cltv_to_predict_temp"]
