@@ -141,6 +141,8 @@ For more information on model training, see the [Hive Documentation](https://hiv
 
 ### Training Python Models
 
+When setting up your custom script, be sure to import the `pytd` library so you will be able to use the TD Client to retrieve and upload tables from TD to the Custom Script. See the [PyTD Documentation](https://pytd-doc.readthedocs.io/en/latest/#prof-services) for more information.
+
 To use Python models, remember to set your API key in the project's secrets tab. Here are some useful functions:
 
 To import tables from TD to Python:
